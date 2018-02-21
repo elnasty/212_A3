@@ -1,0 +1,65 @@
+
+
+Assignment 3
+
+=============
+Impt Note 1 : 
+=============
+
+1)	You are given files like Maze.o and Maze.h which helps to process maze info from mazedata.txt file!
+
+2)	Your job is simply to study the *.h files, and experiment with how to invoke the useful methods encapsulated within!
+
+3)	You are to create a "global resource" data structure representing Maze that your threads should explore
+
+4)	This data structure represents the "knowledge", your threads have gathered : 
+	a) The coordinates of the barriers
+	b) The coordinates of the danger areas
+	c) The 'Start' and 'End' coordinates
+
+5)	In the BEGINNING, this data structure should ONLY have : 
+	a) The 'Start' and 'End' coordinates
+	b) The size of the maze (to specify the size of your 2D array)
+
+6)	At the END, this data structure should contain : 
+	a) ONE solution : which is a valid PATH from 'Start' to 'End'
+	b) The coordinates of all barriers and danger areas encountered, in the course of discovering the valid PATH
+
+7)	Do not "short-cut", by reading in from mazedata.txt, and presenting that as your output ans! (It is v. easy for me to discover whether you are using a genuine, multi-thread program or not)
+
+
+=============
+Impt Note 2 :
+=============
+
+
+1) Your final program MUST compile together with SubmitMazeSoln.o !!
+
+2) Your final program MUST call the methods in SubmitMazeSoln.o to submit your soln !!
+
+3) Your final program MUST display graphically your final solution
+
+4) Your final program MUST show the no. of steps taken from S to E (Start to End)
+
+5) Advantage : When you make use of the methods in SubmitMazeSoln, a lot of
+output required in the Assignment would have been taken care of for you!
+
+
+To compile:
+
+g++ -c yourprogram.cpp
+
+g++ Maze.o Path.o SubmitMazeSoln.o yourprogram.o -o myexplorer.exe
+
+
+
+
+=============
+Impt Note 3 :
+=============
+
+Students are NOT supposed to modify anything in the header (*.h) files given to you.
+
+All changes must be made in your own program files!
+
+
