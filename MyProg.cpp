@@ -214,7 +214,8 @@ void* pathFinder(void* arg)
             
             // hello this are my functions, please give me marks for it
             basicOptimize(traversed);
-            //moderateOptimize(traversed);
+            moderateOptimize(traversed);
+            
             
             pthread_mutex_lock(&thread_mutex);
             
@@ -288,10 +289,10 @@ int basicOptimize(VectorOfPointStructType& traversed)
 void moderateOptimize(VectorOfPointStructType& traversed)
 {   
     cout << "Moderate Optimize Start" << endl;
-    int added = 0, deleted = 0;
+    int added = 0, deleted = 0;// take d from previous optimize
     Point curr, against;
     VectorOfPointStructType steps;
-
+    bool lucky = false;
     for(int i = 0; i < traversed.size(); ++i)// check earlier steps
     {
         curr = traversed[i]; // curr will traverse the path
@@ -311,13 +312,12 @@ void moderateOptimize(VectorOfPointStructType& traversed)
                     // similar to basic optimize, delete the worthless steps
                     traversed.erase(traversed.begin()+i+1, traversed.begin()+j);
                                       
-                    /*cout << "creating straightline between ";
+                    traversed.insert(traversed.begin()+i+1, steps.begin(), steps.end());
+                    
+                    cout << "created straightline between ";
                     steps.front().display();
                     cout << " and ";
-                    steps.back().display();*/
-                    
-                    traversed.insert(traversed.begin()+i+1, steps.begin(), steps.end());
-
+                    steps.back().display();
                     cout << endl;
                     
                     deleted += j-i-1;
@@ -343,7 +343,6 @@ bool allStepsAlrExist(VectorOfPointStructType steps, VectorOfPointStructType tra
 
 bool isObstructed(VectorOfPointStructType steps)
 {
-    pthread_mutex_lock(&thread_mutex);
     for(int i = 0; i < steps.size(); ++i)
     {
     // if along the straight line there is danger or barrier the line is worthless
@@ -352,7 +351,6 @@ bool isObstructed(VectorOfPointStructType steps)
             return true;
         }            
     }
-    pthread_mutex_unlock(&thread_mutex);
     return false;
 }
 
