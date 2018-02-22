@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <bitset>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "Assignm3.h"
 #include "Assignm3_Utils.h"
@@ -35,7 +36,7 @@ using namespace Assignm3;
 #define LEFT_ 2
 #define RIGHT_ 1
 
-Maze* traversedMaze;
+static Maze* traversedMaze;
 int liveThreads = 0;
 int threadNo = 0;
 
@@ -43,29 +44,39 @@ int threadNo = 0;
 void* pathFinder (void*);
 bool pointAlrExplored(Point p, VectorOfPointStructType traversed);
 char getUDLRFrom4Bit(int num);
-bool encounter(Point p, VectorOfPointStructType traversed, bool&);
-void deadEnd(Point p, VectorOfPointStructType traversed);
-
+int basicOptimize(VectorOfPointStructType& traversed);
+void moderateOptimize(VectorOfPointStructType& traversed);
+bool inStraightLine(Point p1, Point p2);
+bool isObstructed(VectorOfPointStructType steps);
+void straightStepsApart(VectorOfPointStructType& steps, Point p1, Point p2);
+bool allStepsAlrExist(VectorOfPointStructType steps, VectorOfPointStructType traversed);
 
 int main()
 {
-    mazeObj->LoadMaze(DefaultMazeFilename);
-    traversedMaze = new Maze(mazeObj->getLength(), mazeObj->getBreadth(), mazeObj->getStartLocation(), mazeObj->getEndLocation);
+    // give the static pointers something to point at
+    mazeObj = new Maze();
+    pathObj = new Path();
+    submitMazeSolnObj = new SubmitMazeSoln();
+    
+    mazeObj->LoadMaze();
+    traversedMaze = new Maze(mazeObj->getLength(), mazeObj->getBreadth(), mazeObj->getStartLocation(), mazeObj->getEndLocation());
     
     while(!discoveredASolutionPath)
     {
-        if(liveThreads < MAX_NO_OF_THREADS)
-            for(;liveThreads < MAX_NO_OF_THREADS; ++liveThreads)
+        if(liveThreads <= MAX_NO_OF_THREADS)
+            for(;liveThreads <= MAX_NO_OF_THREADS; ++liveThreads)
             {
                 // pthread_create(pthread_t *thread, NULL for default, void *(*code to execute)(void *), void *(arg into code));
-                pthread_create(gPFR.activeThreadArray[threadNo++], NULL, pathFinder, reinterpret_cast<void *>(threadNo));
+                pthread_create(&gPFR.activeThreadArray[threadNo++], NULL, pathFinder, reinterpret_cast<void*>(threadNo));
                 liveThreads++;
+                if(threadNo >= 54)
+                    threadNo = 0;
                 
                 cout << "Thread " << THREAD_NAMES[threadNo] << " has been created !!" << endl;
             }
     }
     
-    for(;liveThreads < MAX_NO_OF_THREADS; +liveThreads)
+    for(;liveThreads <= MAX_NO_OF_THREADS; +liveThreads)
         pthread_join(globalPathFinderResource.activeThreadArray[threadNo], NULL);
     
     submitMazeSolnObj->printSubmittedSolution("Stanley Teo", "5920668");
@@ -76,16 +87,16 @@ void* pathFinder(void* arg)
 {
     // thread No. is number of live threads
     int threadNo = static_cast<int>(reinterpret_cast<intptr_t>(arg));
-    bool run = true;
+    bool run = true, deadEnd;
     
     Point curr = mazeObj->getStartLocation();
-    Point up, down, left, right;
+    Point up, down, left, right, toGo;
     
     VectorOfPointStructType traversed;
     traversed.push_back(curr);
     
     while(run)
-    {
+    {    
         // update adjacent points, top left is (0,0)
         up = Point(curr.x, curr.y-1);
         down = Point(curr.x, curr.y+1);
@@ -94,10 +105,14 @@ void* pathFinder(void* arg)
                 
         if(discoveredASolutionPath)
         {
-            gPFR.usedThreadNameIndex--;
-            pthread_exit();
+            liveThreads--;
+            threadNo--;
+            pthread_exit(NULL);
         }
-               
+        
+        /* About to start utilizing global resources, locks it */
+        pthread_mutex_lock (&thread_mutex);
+
         int dir4Bit = 15;
         
         if(pointAlrExplored(up, traversed))
@@ -109,8 +124,8 @@ void* pathFinder(void* arg)
         if(pointAlrExplored(right, traversed))
             dir4Bit -= RIGHT_;
         
-        // data soon to be written to global stuff so lock for for this thread for a bit
-        pthread_mutex_lock (&thread_mutex);
+        pthread_mutex_unlock(&thread_mutex);
+        deadEnd = false;
         
         // here, dir4Bit can range from 0 to 15
         // the possible directions are Up Down Left and Right
@@ -118,80 +133,107 @@ void* pathFinder(void* arg)
         switch (getUDLRFrom4Bit(dir4Bit))
         {
             case 'U': // up
-                if (encounter(up, traversed, run))
-                    curr = up;
+                toGo = up;
                 break;
             case 'D': // down
-                if (encounter(up, traversed, run))
-                    curr = up;
+                toGo = down;
                 break;
             case 'L': // left
-                if (encounter(up, traversed, run))
-                    curr = up;
+                toGo = left;
                 break;
             case 'R': // right
-                if (encounter(up, traversed, run))
-                    curr = up;
+                toGo = right;
                 break;
             default: // dead end
+                deadEnd = true;
         }
         
-        sleep(1);
+        // Does direction lead to dead end
+        if(deadEnd)
+        {
+            cout << "Thread '" << THREAD_NAMES [threadNo] <<"' hit a DEAD END at ";
+            curr.display();
+            cout << " !!" << endl;
+                      
+            pthread_mutex_lock(&thread_mutex);
+            
+            gPFR.discoveredDangerAreas.push_back(curr);// count dead end as danger
+            traversed.pop_back(); // remove the last traversed point
+            curr = traversed.back(); // go back to the new last traversed point (was 2nd latest)
+            
+            pthread_mutex_unlock(&thread_mutex);
+	}
+        // else check if direction to go is a barrier
+        else if(mazeObj->IsThereBarrier(toGo))
+	{               
+            pthread_mutex_lock(&thread_mutex);
+            
+            gPFR.discoveredDangerAreas.push_back(toGo);
+            
+            traversed.push_back(toGo);
+            submitMazeSolnObj->submitPathToBarrier((pthread_t)threadNo, traversed);
+            traversed.pop_back();
+            traversedMaze->updateMaze(toGo, BARRIER_INT);
+            
+            pthread_mutex_unlock(&thread_mutex);
+	}
+        // wasn't barrier nor dead end, so move in direction
+        else
+        {
+            curr = toGo;
+            traversed.push_back(curr);
+            pthread_mutex_lock(&thread_mutex);
+            traversedMaze->ShowPathGraphically(traversed);	
+            pthread_mutex_unlock(&thread_mutex);
+        }
+
+        // if we move into danger
+        if (mazeObj->IsThereDanger(curr))
+	{
+            cout << "Thread '" << THREAD_NAMES [threadNo] << "' stepped into DANGER at ";
+            curr.display(); 
+            cout << " !!" << endl;
+            cout << "Thread '" << THREAD_NAMES [threadNo] << "' is dead !!"
+                 << "It's sacrifice shall not be in vain !!" << endl << endl;
+
+            pthread_mutex_lock(&thread_mutex);
+
+            submitMazeSolnObj->submitPathToDangerArea((pthread_t)threadNo, traversed);
+            gPFR.discoveredDangerAreas.push_back (curr);
+            traversedMaze->updateMaze(curr, DANGER_INT);
+
+            pthread_mutex_unlock(&thread_mutex);
+            
+            run = false; // thread to die stop looping
+	}
+        // else if we moved into end location
+        else if(curr == mazeObj->getEndLocation())
+        {
+            cout << "Thread '" << THREAD_NAMES [threadNo] <<"' just found a solution !! Well done !!";
+            cout << endl << endl;
+            
+            // hello this are my functions, please give me marks for it
+            basicOptimize(traversed);
+            //moderateOptimize(traversed);
+            
+            pthread_mutex_lock(&thread_mutex);
+            
+            submitMazeSolnObj->submitSolutionPath ((pthread_t) threadNo, traversed);
+            discoveredASolutionPath = true;
+            
+            pthread_mutex_unlock(&thread_mutex);
+            
+            run = false; // thread to die also, but honourably with fanfare
+        }
+               
+        usleep(100000);
+        
     }
-    noActiveThread--;
+    liveThreads--;
     threadNo--;
     pthread_exit(NULL);
 }
 
-bool encounter(Point p, VectorOfPointStructType traversed, bool& run)
-{
-    bool canAdvance = false;
-    if(mazeObj->IsThereBarrier(p)) // the encounter was a barrier
-    {
-        gPFR->discoveredDangerLocations.push_back(p);
-        traversed.push_back(p); // add the barrier to traversed points;
-        submitMazeSolnObj->submitPathToBarrier((pthread_t)threadNo, traversed);
-        traversed.pop_back(); // since we don't actually want to be traversing barriers
-        traversedMaze->updateMaze(p, BARRIER_INT);
-        pthread_mutex_unlock(&thread_mutex);
-    }
-    else if(mazeObj->IsThereDanger(p)) // the encounter was a danger
-    {
-        cout << "Thread '" << THREAD_NAMES [threadNo] << "' stepped into DANGER at ";
-	p.display(); 
-        cout << " !!" << endl;
-        
-        gPFR->discoveredDangerLocations.push_back(p);
-        traversed.push_back(p); // add the danger to traversed points;
-        submitMazeSolnObj->submitPathToDangerArea((pthread_t)threadNo, traversed);
-        traversed.pop_back(); // since we don't actually want to be traversing barriers
-        traversedMaze->updateMaze(p, BARRIER_INT);
-        pthread_mutex_unlock(&thread_mutex);
-        run = false;
-    }
-    else if(p == mazeObj->getEndLocation()) // the encounter was the solution
-    {
-        cout << "Thread '" << THREAD_NAMES [threadNo] << "' just found a solution !! ";
-        submitMazeSolnObj->submitSolutionPath ((pthread_t) threadNo, traversed);
-        discoveredASolutionPath += 1;
-        pthread_mutex_unlock(&thread_mutex);
-        run = false;
-    }
-    else // the encounter is just another path and we can advance
-        canAdvance = true;
-        
-    return canAdvance;
-}
-
-bool deadEnd(Point p, VectorOfPointStructType traversed)
-{
-    cout << "Thread " << THREAD_NAMES [threadNo] <<" hits a DEAD END at ";
-    p.display();
-    cout << " !!" << endl;
-    
-    gPFR->discoveredDangerLocations.push_back(p);
-    traversed.pop_back();
-}
 char getUDLRFrom4Bit(int num)
 {
     string s = bitset<4>(num).to_string();
@@ -210,10 +252,173 @@ char getUDLRFrom4Bit(int num)
     return '?';
 }
 
+// simple function to compare every step with every other step and see if they are next to each other
+int basicOptimize(VectorOfPointStructType& traversed)
+{
+    cout << "Basic Optimize Start" << endl;
+    
+    int deleted = 0;
+    Point curr, against;
+    for(int i = 0; i < traversed.size(); ++i)// check earlier steps
+    {
+        curr = traversed[i]; // curr will traverse the path
+        for(int j = traversed.size()-1; j > i+1; --j)// against later steps
+        {
+            against = traversed[j]; // to be compared against
+            // if the points are connected means all other steps in between are worthless
+            if (curr.isConnected(against)) 
+            {
+                cout << i+deleted;
+                curr.display();
+                cout << " touches ";
+                cout << j+deleted;
+                against.display();
+                cout << endl;
+                // if 1 connects to 6, delete 1+1(2) to 6-1(5)
+                traversed.erase(traversed.begin()+i+1, traversed.begin()+j);
+                cout << "deleted " << i+1+deleted << " to " << j-1+deleted << endl;
+                deleted += j-i-1;
+                break; // exit on first touch
+            }
+        }
+    }
+    return deleted;
+}
+
+void moderateOptimize(VectorOfPointStructType& traversed)
+{   
+    cout << "Moderate Optimize Start" << endl;
+    int added = 0, deleted = 0;
+    Point curr, against;
+    VectorOfPointStructType steps;
+
+    for(int i = 0; i < traversed.size(); ++i)// check earlier steps
+    {
+        curr = traversed[i]; // curr will traverse the path
+        for(int j = traversed.size()-1; j > i+1; --j)// against later steps
+        {
+            against = traversed[j]; // to be compared against
+            // if the points can form a straight line and aren't connected
+            if (inStraightLine(curr, against) && !curr.isConnected(against))
+            {
+                // get the vector of straight steps apart
+                straightStepsApart(steps, curr, against);
+                
+                if(isObstructed(steps) && !allStepsAlrExist(steps, traversed))
+                    steps.clear();// clear worthless steps
+                else // we have work to do
+                {
+                    // similar to basic optimize, delete the worthless steps
+                    traversed.erase(traversed.begin()+i+1, traversed.begin()+j);
+                                      
+                    /*cout << "creating straightline between ";
+                    steps.front().display();
+                    cout << " and ";
+                    steps.back().display();*/
+                    
+                    traversed.insert(traversed.begin()+i+1, steps.begin(), steps.end());
+
+                    cout << endl;
+                    
+                    deleted += j-i-1;
+                    //added += steps.size();
+                    i = j;
+                }
+                break; // exit on first success
+            }
+        }
+    }
+}
+
+bool allStepsAlrExist(VectorOfPointStructType steps, VectorOfPointStructType traversed)
+{
+    for (int i = 0; i < steps.size(); ++i)
+    {
+        for(int j = 0; i < traversed.size(); ++j)
+            if (steps[i] != traversed[j])
+                return false;
+    }
+    return true;
+}
+
+bool isObstructed(VectorOfPointStructType steps)
+{
+    pthread_mutex_lock(&thread_mutex);
+    for(int i = 0; i < steps.size(); ++i)
+    {
+    // if along the straight line there is danger or barrier the line is worthless
+        if(mazeObj->IsThereBarrier(steps[i]) || mazeObj->IsThereDanger(steps[i]))
+        {
+            return true;
+        }            
+    }
+    pthread_mutex_unlock(&thread_mutex);
+    return false;
+}
+
+bool inStraightLine(Point p1, Point p2)
+{
+    return (p1.x == p2.x || p1.y == p2.y);
+}
+
+void straightStepsApart(VectorOfPointStructType& steps, Point p1, Point p2)
+{
+    Point p;
+    int dist;
+    steps.clear();// empty just in case
+    
+    if (p1.x == p2.x) // the points are vertical p1 needs to move up or down
+    {
+        dist = p2.y - p1.y;
+        if (abs(dist) == 1)// already adjacent so do nothing
+            return;
+        
+        if (dist > 0)// positive diff
+        {
+            for(int i = 2; i < dist; ++i)
+            {
+                p = Point(p1.x, p1.y+i);
+                steps.push_back(p);
+            }
+        }
+        else if (dist < 0)// negative diff
+        {
+            for(int i = -2; i > dist; --i)
+            {
+                p = Point(p1.x, p1.y+i);
+                steps.push_back(p);
+            }  
+        }
+    }
+    else if (p1.y == p2.y) // the points are horizontal
+    {
+        dist = p2.x - p1.x;
+        if (abs(dist) == 1)// already adjacent so do nothing
+            return;
+        
+        if (dist > 0)// positive diff
+        {
+            for(int i = 1; i < dist; ++i)
+            {
+                p = Point(p1.x+i, p1.y);
+                steps.push_back(p);
+            }
+        }
+        else if (dist < 0)// negative diff
+        {
+            for(int i = -1; i > dist; --i)
+            {
+                p = Point(p1.x+i, p1.y);
+                steps.push_back(p);
+            }  
+        }
+    }
+}
+
 bool pointAlrExplored(Point p, VectorOfPointStructType traversed)
 {
     // if p is known danger or has been traversed before
-    if(Path::isLocationInPath(p, gPFR.discoveredDangerAreas) || Path::isLocationInPath(p, traversed))
+    if(pathObj->isLocationInPath(p, gPFR.discoveredDangerAreas) || pathObj->isLocationInPath(p, traversed))
         return true;
     // otherwise point is unexplored
     return false;
