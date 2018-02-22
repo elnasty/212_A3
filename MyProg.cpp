@@ -305,7 +305,7 @@ void moderateOptimize(VectorOfPointStructType& traversed)
                 // get the vector of straight steps apart
                 straightStepsApart(steps, curr, against);
                 
-                if(isObstructed(steps) && !allStepsAlrExist(steps, traversed))
+                if(isObstructed(steps) || allStepsAlrExist(steps, traversed))
                     steps.clear();// clear worthless steps
                 else // we have work to do
                 {
@@ -332,13 +332,12 @@ void moderateOptimize(VectorOfPointStructType& traversed)
 
 bool allStepsAlrExist(VectorOfPointStructType steps, VectorOfPointStructType traversed)
 {
-    for (int i = 0; i < steps.size(); ++i)
+    for (int i = 0; i < steps.size(); ++i)//check every element of steps
     {
-        for(int j = 0; i < traversed.size(); ++j)
-            if (steps[i] != traversed[j])
-                return false;
+        if(!(pathObj->isLocationInPath(steps[i], traversed)))// if they exist in traversed
+            return false;// the instant one doesn't exit, return false
     }
-    return true;
+    return true;// if false never returned means all steps already exist
 }
 
 bool isObstructed(VectorOfPointStructType steps)
